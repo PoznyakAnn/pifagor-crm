@@ -466,3 +466,22 @@ class InviteCode(Base):
 
     # Релейшн на самого себя, чтобы удобно подтягивать пару из базы
     linked_code: Mapped[Optional["InviteCode"]] = relationship(remote_side=[id])
+
+
+# ─── Email Receipts (чеки EasyPay) ────────────────────────────────────────────
+
+class EmailReceipt(Base):
+    """Parsed EasyPay payment receipts from email inbox."""
+    __tablename__ = "email_receipts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    receipt_number: Mapped[Optional[str]] = mapped_column(String(100))
+    payer_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    payment_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text)
+    # Linked child profile (matched by account number or name)
+    child_id: Mapped[Optional[int]] = mapped_column(ForeignKey("child_profiles.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    child: Mapped[Optional["ChildProfile"]] = relationship()

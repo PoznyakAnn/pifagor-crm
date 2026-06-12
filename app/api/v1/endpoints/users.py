@@ -6,13 +6,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.models import User, TutorProfile, RoleEnum
-from app.schemas.schemas import UserOut, UserUpdate, TutorProfileOut, TutorProfileUpdate
+from app.schemas.schemas import UserOut, UserUpdate, TutorProfileOut, TutorProfileUpdate, UserMeOut
 from app.core.deps import get_current_user, require_admin
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=UserMeOut)
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
@@ -56,14 +56,44 @@ async def get_user(
 
 # ─── Tutor profiles (public list for website) ─────────────────────────────────
 
-@router.get("/tutors/public", response_model=List[TutorProfileOut])
+@router.get("/tutors/public", response_model=list[dict])
 async def list_published_tutors(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(TutorProfile)
-        .options(selectinload(TutorProfile.user), selectinload(TutorProfile.subjects))
-        .where(TutorProfile.is_published == True)
+    """All tutors (with auto-create of missing profiles) — used in admin dropdowns."""
+    from sqlalchemy.orm import joinedload as _jl
+
+    # Load all users with role=tutor
+    users_res = await db.execute(
+        select(User)
+        .where(User.role == RoleEnum.tutor)
+        .options(_jl(User.tutor_profile))
     )
-    return result.scalars().all()
+    tutor_users = users_res.scalars().unique().all()
+
+    output = []
+    for u in tutor_users:
+        profile = u.tutor_profile
+        if profile is None:
+            # Auto-create missing TutorProfile
+            profile = TutorProfile(user_id=u.id)
+            db.add(profile)
+            await db.flush()
+
+        output.append({
+            "id": profile.id,           # tutor_profile.id  — used as tutor_id in lessons
+            "user": {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            },
+            "rate_per_hour": profile.rate_per_hour,
+            "is_published": profile.is_published,
+        })
+
+    if any(u.tutor_profile is None for u in tutor_users):
+        await db.commit()
+
+    return output
 
 
 @router.patch("/tutors/me", response_model=TutorProfileOut)

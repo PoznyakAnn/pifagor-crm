@@ -4,38 +4,93 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from app.db.session import get_db
-from app.models.models import Lesson, User, RoleEnum, LessonStatus
+from app.models.models import Lesson, User, RoleEnum, LessonStatus, ChildProfile, TutorProfile
 from app.schemas.schemas import LessonCreate, LessonUpdate, LessonOut
 from app.core.deps import get_current_user
-from sqlalchemy.orm import joinedload
+
 router = APIRouter(prefix="/lessons", tags=["lessons"])
 
 
-@router.get("/", response_model=List[LessonOut])
+def _lesson_to_dict(l: Lesson) -> dict:
+    """Convert ORM Lesson to a dict with populated student/tutor/subject names."""
+    student_name = None
+    tutor_name = None
+    subject_name = None
+
+    if l.child and l.child.user:
+        u = l.child.user
+        student_name = f"{u.last_name} {u.first_name}".strip() or u.email
+    if l.tutor and l.tutor.user:
+        u = l.tutor.user
+        tutor_name = f"{u.last_name} {u.first_name}".strip() or u.email
+    if l.subject:
+        subject_name = l.subject.name
+
+    return {
+        "id": l.id,
+        "tutor_id": l.tutor_id,
+        "child_id": l.child_id,
+        "subject_id": l.subject_id,
+        "student_name": student_name,
+        "tutor_name": tutor_name,
+        "subject_name": subject_name,
+        "date": str(l.date),
+        "time_start": str(l.time_start),
+        "time_end": str(l.time_end),
+        "status": l.status,
+        "cancel_reason": l.cancel_reason,
+        "notes": l.notes,
+        "is_free_trial": l.is_free_trial,
+        "created_at": str(l.created_at),
+    }
+
+
+def _lessons_query_with_joins(base_q):
+    """Apply eager-load joins to a Lesson select query."""
+    return base_q.options(
+        joinedload(Lesson.tutor).joinedload(TutorProfile.user),
+        joinedload(Lesson.child).joinedload(ChildProfile.user),
+        joinedload(Lesson.subject),
+    )
+
+
+@router.get("/", response_model=List[dict])
 async def get_lessons(
-    tutor_id: Optional[int] = Query(None),
-    child_id: Optional[int] = Query(None),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    status: Optional[LessonStatus] = Query(None),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+        tutor_id: Optional[int] = Query(None),
+        child_id: Optional[int] = Query(None),
+        date_from: Optional[date] = Query(None),
+        date_to: Optional[date] = Query(None),
+        status: Optional[LessonStatus] = Query(None),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
     filters = []
 
-    # Role-based filter: each role sees only their own data
     if current_user.role == RoleEnum.tutor:
         if current_user.tutor_profile:
             filters.append(Lesson.tutor_id == current_user.tutor_profile.id)
+        else:
+            return []
     elif current_user.role == RoleEnum.child:
         if current_user.child_profile:
             filters.append(Lesson.child_id == current_user.child_profile.id)
+        else:
+            return []
     elif current_user.role == RoleEnum.parent:
-        # parent sees all children's lessons - pass child_id from frontend
-        if child_id:
+        if current_user.parent_profile:
+            child_ids = [pc.child_id for pc in current_user.parent_profile.children]
+            if child_ids:
+                filters.append(Lesson.child_id.in_(child_ids))
+            elif child_id:
+                filters.append(Lesson.child_id == child_id)
+            else:
+                return []
+        elif child_id:
             filters.append(Lesson.child_id == child_id)
+        else:
+            return []
     else:
         # admin sees all, can filter
         if tutor_id:
@@ -55,21 +110,101 @@ async def get_lessons(
         q = q.where(and_(*filters))
     q = q.order_by(Lesson.date, Lesson.time_start)
 
+    q = _lessons_query_with_joins(q)
     result = await db.execute(q)
-    return result.scalars().all()
+    lessons = result.scalars().unique().all()
+    return [_lesson_to_dict(l) for l in lessons]
 
 
-@router.post("/", response_model=LessonOut, status_code=201)
+@router.post("/", response_model=dict, status_code=201)
 async def create_lesson(
-    data: LessonCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+        data: LessonCreate,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
-    lesson = Lesson(**data.model_dump())
-    db.add(lesson)
-    await db.commit()
-    await db.refresh(lesson)
-    return lesson
+    from sqlalchemy.exc import IntegrityError
+
+    # Validate tutor_profile exists
+    tp_res = await db.execute(select(TutorProfile).where(TutorProfile.id == data.tutor_id))
+    if not tp_res.scalar_one_or_none():
+        raise HTTPException(status_code=422, detail=f"Репетитор с профилем id={data.tutor_id} не найден")
+
+    # Validate child_profile exists
+    cp_res = await db.execute(select(ChildProfile).where(ChildProfile.id == data.child_id))
+    if not cp_res.scalar_one_or_none():
+        raise HTTPException(status_code=422,
+                            detail=f"Ученик с профилем id={data.child_id} не найден. Попросите ученика войти в систему хотя бы раз.")
+
+    try:
+        lesson = Lesson(**data.model_dump())
+        db.add(lesson)
+        await db.commit()
+
+        # Запрашиваем созданный урок из базы сразу со всеми связями
+        stmt = (
+            select(Lesson)
+            .where(Lesson.id == lesson.id)
+            .options(
+                selectinload(Lesson.child).selectinload(ChildProfile.user),
+                selectinload(Lesson.tutor).selectinload(TutorProfile.user),
+                selectinload(Lesson.subject)
+            )
+        )
+        res = await db.execute(stmt)
+        fresh_lesson = res.scalar_one()
+
+        return _lesson_to_dict(fresh_lesson)
+
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=f"Ошибка базы данных: {str(e.orig)}")
+
+
+@router.get("/tutor/my-students", response_model=list[dict])
+async def get_tutor_students(
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """Return unique students who have lessons with the current tutor."""
+    if current_user.role not in (RoleEnum.tutor, RoleEnum.admin):
+        raise HTTPException(status_code=403, detail="Only tutors can access this")
+
+    tutor_profile_id = None
+    if current_user.role == RoleEnum.tutor:
+        if not current_user.tutor_profile:
+            return []
+        tutor_profile_id = current_user.tutor_profile.id
+
+    q = select(Lesson)
+    if tutor_profile_id:
+        q = q.where(Lesson.tutor_id == tutor_profile_id)
+
+    result = await db.execute(q)
+    lessons = result.scalars().all()
+
+    child_ids = list({l.child_id for l in lessons})
+    if not child_ids:
+        return []
+
+    child_result = await db.execute(
+        select(ChildProfile)
+        .options(joinedload(ChildProfile.user))
+        .where(ChildProfile.id.in_(child_ids))
+    )
+    children = child_result.scalars().unique().all()
+
+    output = []
+    for c in children:
+        if c.user:
+            output.append({
+                "child_profile_id": c.id,
+                "user_id": c.user.id,
+                "first_name": c.user.first_name,
+                "last_name": c.user.last_name,
+                "email": c.user.email,
+            })
+
+    return output
 
 
 @router.get("/{lesson_id}", response_model=LessonOut)
@@ -78,12 +213,9 @@ async def get_lesson(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-    # Вместо обычного select подтягиваем связанные таблицы через options(joinedload(...))
-    from sqlalchemy.orm import joinedload
-
     q = select(Lesson).where(Lesson.id == lesson_id).options(
-        joinedload(Lesson.tutor),
-        joinedload(Lesson.child),
+        joinedload(Lesson.tutor).joinedload(TutorProfile.user),
+        joinedload(Lesson.child).joinedload(ChildProfile.user),
         joinedload(Lesson.subject)
     )
 
@@ -93,33 +225,26 @@ async def get_lesson(
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    # Проверяем права: если зашел не админ, репетитор и ученик могут видеть только СВОЙ урок
-    if current_user.role == RoleEnum.tutor and lesson.tutor_id != current_user.tutor_profile.id:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-    if current_user.role == RoleEnum.child and lesson.child_id != current_user.child_profile.id:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if current_user.role == RoleEnum.tutor and current_user.tutor_profile:
+        if lesson.tutor_id != current_user.tutor_profile.id:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+    if current_user.role == RoleEnum.child and current_user.child_profile:
+        if lesson.child_id != current_user.child_profile.id:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
     return lesson
 
 
-@router.patch("/{lesson_id}", response_model=LessonOut)
+@router.patch("/{lesson_id}", response_model=dict)
 async def update_lesson(
         lesson_id: int,
         data: LessonUpdate,
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import joinedload  # Не забываем импорт
-
-    # Добавляем joinedload сразу при поиске урока, чтобы связи были активны
     result = await db.execute(
         select(Lesson)
         .where(Lesson.id == lesson_id)
-        .options(
-            joinedload(Lesson.tutor),
-            joinedload(Lesson.child),
-            joinedload(Lesson.subject)
-        )
     )
     lesson = result.scalar_one_or_none()
     if not lesson:
@@ -130,16 +255,27 @@ async def update_lesson(
 
     await db.commit()
 
-    # После commit делаем refresh, чтобы SQLAlchemy подтянула обновленные данные
-    await db.refresh(lesson)
-    return lesson
+    # --- ИСПРАВЛЕНИЕ ТУТ: Подгружаем связи после обновления, чтобы не было ошибки 500 ---
+    stmt = (
+        select(Lesson)
+        .where(Lesson.id == lesson_id)
+        .options(
+            selectinload(Lesson.child).selectinload(ChildProfile.user),
+            selectinload(Lesson.tutor).selectinload(TutorProfile.user),
+            selectinload(Lesson.subject)
+        )
+    )
+    res = await db.execute(stmt)
+    fresh_lesson = res.scalar_one()
+
+    return _lesson_to_dict(fresh_lesson)
 
 
 @router.delete("/{lesson_id}", status_code=204)
 async def delete_lesson(
-    lesson_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+        lesson_id: int,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
     lesson = result.scalar_one_or_none()
@@ -150,51 +286,39 @@ async def delete_lesson(
 
 
 @router.get("/students-list/all", response_model=list[dict])
-async def list_students_for_tutor_fixed(
-        db: AsyncSession = Depends(get_db)
-):
-    """
-    Безопасный асинхронный эндпоинт для получения учеников
-    с легальной подгрузкой child_profile через joinedload.
-    """
+async def list_students_for_tutor_fixed(db: AsyncSession = Depends(get_db)):
     try:
-        # Используем joinedload, чтобы SQLAlchemy за один раз скачала и юзера, и его профиль
         query = (
             select(User)
             .where(User.role == "child")
             .options(joinedload(User.child_profile))
         )
-
         result = await db.execute(query)
-        students = result.scalars().unique().all()  # .unique() обязателен при joinedload!
+        students = result.scalars().unique().all()
 
         output = []
         for s in students:
-            # Ищем честный профиль ребёнка
-            profile_id = None
-            if hasattr(s, "child_profile") and s.child_profile is not None:
-                profile_id = s.child_profile.id
-
-            # Если связи child_profile нет, пробуем вытащить из полей child_id
-            if not profile_id and hasattr(s, "child_id") and s.child_id is not None:
-                profile_id = s.child_id
-
-            # Если и там пусто, ставим s.id, но если база ругается — значит нужен РЕАЛЬНЫЙ существующий профиль.
-            # Для теста, если профиля нет, можно временно ставить 1 (твой первый тестовый ученик, который точно сработал!)
-            if not profile_id:
-                profile_id = 1  # Запасной рабочий вариант, чтобы не было ошибки 500
+            cp = s.child_profile
+            if cp is None:
+                from app.models.models import ChildProfile as _CP
+                cp = _CP(user_id=s.id)
+                db.add(cp)
+                await db.flush()
 
             output.append({
                 "id": s.id,
                 "first_name": s.first_name,
                 "last_name": s.last_name,
                 "email": s.email,
-                "child_profile": {"id": profile_id}
+                "child_profile": {"id": cp.id}
             })
 
+        if output:
+            await db.commit()
         return output
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка SQLAlchemy: {str(e)}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
 @router.get("/tutor-calendar/all", response_model=list[dict])
@@ -202,27 +326,22 @@ async def get_lessons_for_tutor_fixed(
         db: AsyncSession = Depends(get_db)
 ):
     try:
-        # Просто скачиваем уроки, подтягивая профиль ребёнка
-        query = select(Lesson).options(joinedload(Lesson.child))
+        query = select(Lesson).options(joinedload(Lesson.child).joinedload(ChildProfile.user))
         result = await db.execute(query)
         lessons = result.scalars().unique().all()
 
         output = []
         for l in lessons:
-            # ЖЕЛЕЗНАЯ СТРАХОВКА: если у ChildProfile нет имени,
-            # мы не падаем в 500 ошибку, а просто пишем "Ученик"
             first_name = "Ученик"
             last_name = ""
             email = ""
 
             if l.child:
-                # Если у профиля есть связь с юзером, берем оттуда
                 if hasattr(l.child, "user") and l.child.user is not None:
                     first_name = getattr(l.child.user, "first_name", "Ученик")
                     last_name = getattr(l.child.user, "last_name", "")
                     email = getattr(l.child.user, "email", "")
                 else:
-                    # Если связи нет, пробуем взять напрямую (на случай если это модель User)
                     first_name = getattr(l.child, "first_name", "Ученик")
                     last_name = getattr(l.child, "last_name", "")
                     email = getattr(l.child, "email", "")
@@ -235,6 +354,7 @@ async def get_lessons_for_tutor_fixed(
                 "date": str(l.date),
                 "time_start": str(l.time_start),
                 "time_end": str(l.time_end),
+                "status": l.status,
                 "notes": l.notes or "",
                 "is_free_trial": l.is_free_trial,
                 "child": {

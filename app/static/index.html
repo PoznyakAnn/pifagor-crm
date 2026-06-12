@@ -227,10 +227,18 @@ let cachedUsers = [];
   <div id="admin-payments" style="display:none">
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <h3 style="margin:0">Оплаты (данные из чеков по email)</h3>
-        <button class="btn sm primary" onclick="loadAdminPayments()">🔄 Обновить</button>
+        <h3 style="margin:0">Финансовый отчёт (из чеков EasyPay)</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn sm" onclick="triggerEmailParse()">📧 Проверить почту</button>
+          <button class="btn sm primary" onclick="loadAdminPayments()">🔄 Обновить отчёт</button>
+        </div>
       </div>
+      <div id="admin-parse-result" style="margin-bottom:12px"></div>
       <div id="admin-payments-list"><div class="loading"><div class="spinner"></div></div></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3>Все чеки</h3>
+      <div id="admin-receipts-list"><div class="loading"><div class="spinner"></div></div></div>
     </div>
   </div>
 </div>
@@ -391,6 +399,7 @@ let cachedUsers = [];
 <div class="modal-overlay" id="modal-lesson">
   <div class="modal">
     <div class="modal-title">Новое занятие <button class="btn sm" onclick="closeModal('modal-lesson')">✕</button></div>
+    <div class="form-row" id="ls-tutor-row" style="display:none"><label>Репетитор</label><select id="ls-tutor"></select></div>
     <div class="form-row"><label>Ученик</label><select id="ls-student"></select></div>
     <div class="form-row"><label>Предмет</label><select id="ls-subj"></select></div>
     <div class="form-row"><label>Дата</label><input type="date" id="ls-date" /></div>
@@ -674,8 +683,6 @@ async function initRolePage(role) {
   }
   if (role === 'tutor') {
     await loadTutorSchedule();
-    await loadTutorStudents();
-    await loadTutorFinance();
   }
   if (role === 'parent') {
     await loadParentSchedule();
@@ -717,7 +724,9 @@ function tutorTab(tab) {
     document.getElementById('tutor-' + t).style.display = t === tab ? '' : 'none';
     document.getElementById('tut-t' + (i+1)).classList.toggle('active', t === tab);
   });
-  if (tab === 'schedule') { renderCalendar('tutor-cal-grid', 'tut-month-label'); }
+  if (tab === 'schedule') { renderCalendar('tutor-cal-grid', 'tut-month-label'); loadTutorSchedule(); }
+  if (tab === 'students') { loadTutorStudents(); }
+  if (tab === 'finance')  { loadTutorFinance(); }
 }
 
 function parentTab(tab) {
@@ -782,10 +791,10 @@ function renderCalendar(gridId, labelId) {
 
 function changeMonth(dir) {
   currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + dir, 1);
-  if (currentUser?.role === 'admin')  { renderCalendar('admin-cal-grid', 'adm-month-label'); loadAdminLessons(); }
-  if (currentUser?.role === 'tutor')  { renderCalendar('tutor-cal-grid', 'tut-month-label'); loadTutorSchedule(); }
-  if (currentUser?.role === 'parent') { renderCalendar('parent-cal-grid', 'par-month-label'); loadParentSchedule(); }
-  if (currentUser?.role === 'child')  { renderCalendar('child-cal-grid', 'ch-month-label'); loadChildSchedule(); }
+  if (currentUser?.role === 'admin')  { loadAdminLessons(); }
+  if (currentUser?.role === 'tutor')  { loadTutorSchedule(); }
+  if (currentUser?.role === 'parent') { loadParentSchedule(); }
+  if (currentUser?.role === 'child')  { loadChildSchedule(); }
 }
 
 // ============================================================
@@ -971,8 +980,6 @@ async function loadAdminLessons() {
   const ym = monthParam();
 
   try {
-    // Скачиваем и кэшируем всех пользователей системы, чтобы знать их имена по ID
-    cachedUsers = await get('/users/') || [];
 
     const dateFrom = `${ym}-01`;
     const year = parseInt(ym.split('-')[0]);
@@ -1053,30 +1060,68 @@ async function loadAdminStudents() {
 }
 
 async function loadAdminPayments() {
-  const el = document.getElementById('admin-payments-list');
-  if (!el) return;
-  try {
-    const data = await get('/payments');
-    if (!data?.length) {
-      el.innerHTML = '<div class="alert alert-info">Данных об оплатах нет. Чеки ещё не обработаны.</div>';
-      return;
+  const reportEl   = document.getElementById('admin-payments-list');
+  const receiptsEl = document.getElementById('admin-receipts-list');
+
+  // Weekly finance report
+  if (reportEl) {
+    try {
+      const report = await get('/admin/finance-report');
+      if (!report?.length) {
+        reportEl.innerHTML = '<div class="alert alert-info">На этой неделе проведённых занятий или чеков нет.</div>';
+      } else {
+        reportEl.innerHTML = `<table>
+          <thead><tr><th>Ученик</th><th>Проведено занятий</th><th>Оплачено занятий</th><th>Сумма оплат</th></tr></thead>
+          <tbody>${report.map(r => `
+            <tr>
+              <td style="font-weight:600">${r.student_name}</td>
+              <td>${r.lessons_conducted}</td>
+              <td><span class="badge ${r.lessons_paid >= r.lessons_conducted ? 'badge-green' : 'badge-amber'}">${r.lessons_paid}/${r.lessons_conducted}</span></td>
+              <td>${r.amount_paid} BYN</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      }
+    } catch(e) {
+      reportEl.innerHTML = errBox('Не удалось загрузить финансовый отчёт');
     }
-    el.innerHTML = `<table>
-      <thead><tr><th>Ученик</th><th>Дата чека</th><th>Сумма</th><th>Метод</th><th>Занятий куплено</th><th>Статус</th></tr></thead>
-      <tbody>${data.map(p => `
-        <tr>
-          <td style="font-weight:500">${p.student_name || '—'}</td>
-          <td>${(p.payment_date || '').slice(0,10)}</td>
-          <td style="font-weight:500">${p.amount} BYN</td>
-          <td>${p.method || '—'}</td>
-          <td>${p.lessons_covered || '—'}</td>
-          <td><span class="badge ${p.status === 'confirmed' ? 'badge-green' : 'badge-amber'}">${p.status === 'confirmed' ? 'Подтверждено' : 'Ожидает'}</span></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  }
+
+  // All receipts table
+  if (receiptsEl) {
+    try {
+      const receipts = await get('/admin/receipts');
+      if (!receipts?.length) {
+        receiptsEl.innerHTML = '<div style="color:#888;font-size:13px">Чеков нет. Нажмите «Проверить почту» для парсинга.</div>';
+      } else {
+        receiptsEl.innerHTML = `<table>
+          <thead><tr><th>Дата</th><th>Плательщик</th><th>Ученик</th><th>Сумма</th><th>Номер чека</th></tr></thead>
+          <tbody>${receipts.map(r => `
+            <tr>
+              <td>${(r.payment_date || r.created_at || '').slice(0,10)}</td>
+              <td>${r.payer_name}</td>
+              <td>${r.student_name || '<span style="color:#aaa">не сопоставлен</span>'}</td>
+              <td style="font-weight:500">${r.amount} BYN</td>
+              <td style="font-family:monospace;font-size:11px;color:#888">${r.receipt_number || '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      }
+    } catch(e) {
+      receiptsEl.innerHTML = errBox('Не удалось загрузить чеки');
+    }
+  }
+}
+
+async function triggerEmailParse() {
+  const resultEl = document.getElementById('admin-parse-result');
+  if (resultEl) resultEl.innerHTML = '<div class="loading"><div class="spinner"></div> Проверяем почту...</div>';
+  try {
+    const res = await post('/admin/receipts/parse-emails', {});
+    if (resultEl) resultEl.innerHTML = `<div class="alert alert-success">${res.message}</div>`;
+    await loadAdminPayments();
   } catch(e) {
-    console.error("Ошибка загрузки платежей:", e);
-    if (el) el.innerHTML = 'Не удалось загрузить платежи';
+    if (resultEl) resultEl.innerHTML = errBox('Ошибка при проверке почты: ' + e.message);
   }
 }
 
@@ -1084,130 +1129,145 @@ async function loadAdminPayments() {
 //  TUTOR PAGES
 // ============================================================
 async function loadTutorSchedule() {
+  const el = document.getElementById('tutor-lessons-list');
   try {
-    // Стучимся на наш новый, безопасный эндпоинт, который не падает в 500!
-    const allLessons = await get('/lessons/tutor-calendar/all');
+    const ym = monthParam();
+    const year  = parseInt(ym.split('-')[0]);
+    const month = parseInt(ym.split('-')[1]);
+    const lastDay = new Date(year, month, 0).getDate();
+    const dateFrom = `${ym}-01`;
+    const dateTo   = `${ym}-${String(lastDay).padStart(2,'0')}`;
 
-    console.log("[Календарь Максима] Успешно загружены уроки:", allLessons);
-
-    if (typeof renderTutorCalendar === 'function') {
-      renderTutorCalendar(allLessons || []);
-    } else if (typeof renderCalendar === 'function') {
-      renderCalendar(allLessons || []);
-    }
-
-    const container = document.getElementById('tutor-lessons-list') || document.getElementById('lessons-container');
-    if (container) {
-      if (!allLessons || allLessons.length === 0) {
-        container.innerHTML = '<div class="text-muted">Занятий пока нет</div>';
-      } else {
-        container.innerHTML = '<div class="text-success">Расписание обновлено</div>';
-      }
-    }
-  } catch (e) {
-    console.error("Ошибка в loadTutorSchedule Максима:", e);
+    const lessons = await get(`/lessons/?date_from=${dateFrom}&date_to=${dateTo}`);
+    cachedLessons = lessons || [];
+    renderCalendar('tutor-cal-grid', 'tut-month-label');
+    if (el) el.innerHTML = renderLessonsTable(cachedLessons, false);
+  } catch(e) {
+    console.error("Ошибка loadTutorSchedule:", e);
+    if (el) el.innerHTML = errBox('Не удалось загрузить занятия');
   }
 }
 
 async function loadTutorStudents() {
-  const container = document.getElementById('tutor-students-list') || document.getElementById('students-container');
+  const el = document.getElementById('tutor-students-list');
+  if (!el) return;
   try {
-    // Берем данные оттуда же, где они гарантированно работают
-    const students = await get('/lessons/students-list/all');
-
-    if (container) {
-      if (!students || students.length === 0) {
-        container.innerHTML = '<div class="text-muted">Учеников пока нет</div>';
-      } else {
-        container.innerHTML = students.map(s => `
-          <div class="student-card" style="padding:8px; background:#f8f9fc; margin-bottom:5px; border-left:4px solid #4e73df;">
-            <strong>${s.last_name || ''} ${s.first_name || ''}</strong> (${s.email})
-          </div>
-        `).join('');
-      }
+    const students = await get('/lessons/tutor/my-students');
+    if (!students || students.length === 0) {
+      el.innerHTML = '<div class="alert alert-info">У вас пока нет учеников. Добавьте занятие — ученик появится здесь.</div>';
+      return;
     }
-  } catch (e) {
-    console.error("Ошибка во вкладке студентов Максима:", e);
+    el.innerHTML = students.map(s => `
+      <div class="lesson-card">
+        <div>
+          <div style="font-weight:600">${s.last_name || ''} ${s.first_name || ''}</div>
+          <div style="font-size:12px;color:#888">${s.email}</div>
+        </div>
+        <span class="badge badge-purple">Ученик</span>
+      </div>
+    `).join('');
+  } catch(e) {
+    el.innerHTML = errBox('Не удалось загрузить список учеников');
   }
 }
 
 async function loadTutorFinance() {
   try {
-    const data = await get('/tutor/finance');
+    // Finance stats
+    const data = await get('/tutor/finance').catch(() => null);
     if (data) {
       document.getElementById('tut-stat-done').textContent = data.lessons_done ?? '—';
       document.getElementById('tut-stat-earn').textContent = (data.earnings ?? '—') + ' BYN';
       document.getElementById('tut-stat-acts').textContent = data.acts_count ?? '—';
     }
-    // Load acts
-    const acts = await get('/tutor/acts');
-    const el = document.getElementById('acts-list');
-    if (acts?.length) {
-      el.innerHTML = '<div style="font-size:12px;color:#888;margin-bottom:8px">Загруженные акты:</div>' +
-        acts.map(a => `<div class="lesson-card">
-          <div>
-            <div style="font-weight:500">${a.filename || 'Акт'}</div>
-            <div style="font-size:12px;color:#888">${(a.created_at || '').slice(0,10)}</div>
-          </div>
-          <span class="badge ${a.status === 'approved' ? 'badge-green' : 'badge-amber'}">${a.status === 'approved' ? 'Принят' : 'На проверке'}</span>
-        </div>`).join('');
+
+    // Acts
+    const acts = await get('/acts').catch(() => []);
+    const actsEl = document.getElementById('acts-list');
+    if (actsEl) {
+      actsEl.innerHTML = acts?.length
+        ? '<div style="font-size:12px;color:#888;margin-bottom:8px">Загруженные акты:</div>' +
+          acts.map(a => `<div class="lesson-card">
+            <div>
+              <div style="font-weight:500">Акт ${(a.period_start||'').slice(0,10)} — ${(a.period_end||'').slice(0,10)}</div>
+              <div style="font-size:12px;color:#888">${a.lessons_count} занятий · ${a.total_amount} BYN</div>
+            </div>
+            <span class="badge ${a.signed_url ? 'badge-green' : 'badge-amber'}">${a.signed_url ? 'Загружен' : 'Без подписи'}</span>
+          </div>`).join('')
+        : '<div style="color:#888;font-size:13px">Актов пока нет</div>';
     }
+
     // Contract
-    const contract = await get('/tutor/contract');
+    const contracts = await get('/contracts/tutor').catch(() => []);
     const cel = document.getElementById('tutor-contract-info');
-    if (contract) {
-      cel.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-weight:500">Договор №${contract.contract_number || '—'}</div>
-          <div style="font-size:12px;color:#888">от ${(contract.start_date || '').slice(0,10)}</div>
-        </div>
-        <button class="btn sm" onclick="downloadContract(${contract.id})">↓ Скачать</button>
-      </div>`;
-    } else {
-      cel.innerHTML = '<div style="color:#888;font-size:13px">Договор не загружен</div>';
+    if (cel) {
+      const contract = contracts?.[0];
+      cel.innerHTML = contract
+        ? `<div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-weight:500">Договор (загружен)</div>
+              <div style="font-size:12px;color:#888">от ${(contract.created_at || '').slice(0,10)}</div>
+            </div>
+            <button class="btn sm" onclick="window.open('${contract.file_url}','_blank')">↓ Скачать</button>
+          </div>`
+        : '<div style="color:#888;font-size:13px">Договор не загружен администратором</div>';
     }
+
     // Reports
-    const reports = await get('/tutor/reports');
+    const reports = await get('/reports').catch(() => []);
     const rel = document.getElementById('tutor-reports-list');
-    rel.innerHTML = reports?.length
-      ? reports.map(r => reportCard(r)).join('')
-      : '<div style="color:#888;font-size:13px">Отчётов пока нет</div>';
-  } catch(e) {}
+    if (rel) {
+      rel.innerHTML = reports?.length
+        ? reports.map(r => reportCard(r)).join('')
+        : '<div style="color:#888;font-size:13px">Отчётов пока нет</div>';
+    }
+  } catch(e) { console.error("loadTutorFinance error:", e); }
 }
 
 // ============================================================
 //  PARENT PAGES
 // ============================================================
 async function loadParentSchedule() {
-  const ym = monthParam();
+  const el = document.getElementById('parent-lessons-list');
   try {
-    const lessons = await get('/parent/lessons?month=' + ym);
+    const ym = monthParam();
+    const year  = parseInt(ym.split('-')[0]);
+    const month = parseInt(ym.split('-')[1]);
+    const lastDay = new Date(year, month, 0).getDate();
+    const dateFrom = `${ym}-01`;
+    const dateTo   = `${ym}-${String(lastDay).padStart(2,'0')}`;
+    // Backend filters by parent's linked children automatically
+    const lessons = await get(`/lessons/?date_from=${dateFrom}&date_to=${dateTo}`);
     cachedLessons = lessons || [];
     renderCalendar('parent-cal-grid', 'par-month-label');
-    renderLessonsList('parent-lessons-list', lessons, 'parent');
-  } catch(e) {}
+    if (el) el.innerHTML = renderLessonsTable(cachedLessons, false);
+  } catch(e) {
+    if (el) el.innerHTML = errBox('Не удалось загрузить расписание');
+  }
 }
 
 async function loadParentPayments() {
   const el = document.getElementById('parent-payments-list');
   try {
-    const data = await get('/parent/payments');
-    // Stats
-    const paid   = (data?.payments || []).filter(p => p.status === 'confirmed').length;
-    const unpaid = (data?.summary?.unpaid_lessons) || 0;
-    const debt   = (data?.summary?.debt_amount) || 0;
+    const payments = await get('/payments');
+    const paid   = (payments || []).filter(p => p.is_paid).length;
+    const unpaid = (payments || []).filter(p => !p.is_paid).length;
+    const debt   = (payments || []).filter(p => !p.is_paid).reduce((s, p) => s + (p.amount || 0), 0);
     document.getElementById('par-paid-total').textContent   = paid;
     document.getElementById('par-unpaid-total').textContent = unpaid;
-    document.getElementById('par-balance').textContent      = debt + ' BYN';
+    document.getElementById('par-balance').textContent      = debt.toFixed(2) + ' BYN';
 
-    if (!data?.payments?.length) { el.innerHTML = '<div style="color:#888;font-size:13px">Платежей пока нет</div>'; return; }
-    el.innerHTML = data.payments.map(p => `
+    if (!payments?.length) { el.innerHTML = '<div style="color:#888;font-size:13px">Платежей пока нет</div>'; return; }
+    el.innerHTML = payments.map(p => `
       <div class="payment-row">
         <div>
-          <div style="font-weight:500">${(p.payment_date || '').slice(0,10)}</div>
-          <div style="font-size:12px;color:#888">${p.method || '—'}${p.receipt_number ? ' · Чек №' + p.receipt_number : ''}</div>
+          <div style="font-weight:500">${(p.created_at || '').slice(0,10)}</div>
+          <div style="font-size:12px;color:#888">${p.description || '—'}</div>
         </div>
-        <span class="badge badge-green" style="font-size:13px">${p.amount} BYN</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge badge-green" style="font-size:13px">${p.amount} BYN</span>
+          <span class="badge ${p.is_paid ? 'badge-green' : 'badge-amber'}">${p.is_paid ? 'Оплачено' : 'Ожидает'}</span>
+        </div>
       </div>`).join('');
   } catch(e) { el.innerHTML = errBox('Ошибка загрузки оплат'); }
 }
@@ -1215,7 +1275,7 @@ async function loadParentPayments() {
 async function loadParentReports() {
   const el = document.getElementById('parent-reports-list');
   try {
-    const reports = await get('/parent/reports');
+    const reports = await get('/reports');
     el.innerHTML = reports?.length
       ? reports.map(r => reportCard(r)).join('')
       : '<div class="alert alert-info">Отчётов пока нет</div>';
@@ -1225,17 +1285,17 @@ async function loadParentReports() {
 async function loadParentContract() {
   const el = document.getElementById('parent-contract-info');
   try {
-    const c = await get('/parent/contract');
+    const contracts = await get('/contracts/parent');
+    const c = contracts?.[0];
     if (!c) { el.innerHTML = '<div style="color:#888;font-size:13px">Договор не загружен администратором</div>'; return; }
     el.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
         <div>
-          <div style="font-weight:500">Договор №${c.contract_number || '—'}</div>
-          <div style="font-size:12px;color:#888">от ${(c.start_date || '').slice(0,10)} · <span class="badge ${c.is_signed ? 'badge-green' : 'badge-amber'}">${c.is_signed ? 'Подписан' : 'Ожидает подписи'}</span></div>
+          <div style="font-weight:500">Договор (загружен)</div>
+          <div style="font-size:12px;color:#888">от ${(c.created_at || '').slice(0,10)} · <span class="badge ${c.is_signed ? 'badge-green' : 'badge-amber'}">${c.is_signed ? 'Подписан' : 'Ожидает подписи'}</span></div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn sm" onclick="downloadParentContract(${c.id})">↓ Скачать</button>
-          ${!c.is_signed ? `<label class="btn sm success" style="cursor:pointer">↑ Загрузить подписанный<input type="file" style="display:none" accept=".pdf" onchange="uploadSignedContract(this,${c.id})"></label>` : ''}
+          <button class="btn sm" onclick="window.open('${c.file_url}','_blank')">↓ Скачать</button>
         </div>
       </div>`;
   } catch(e) { el.innerHTML = errBox('Ошибка загрузки договора'); }
@@ -1244,7 +1304,7 @@ async function loadParentContract() {
 async function loadParentComments() {
   const el = document.getElementById('parent-comments-list');
   try {
-    const items = await get('/parent/comments');
+    const items = await get('/comments');
     el.innerHTML = items?.length
       ? items.map(c => `<div class="card-sm" style="margin-bottom:8px">
           <div style="font-size:12px;color:#888;margin-bottom:4px">${(c.created_at || '').slice(0,10)}</div>
@@ -1257,8 +1317,10 @@ async function loadParentComments() {
 async function sendComment() {
   const text = document.getElementById('comment-text').value.trim();
   if (!text) { toast('Введите текст комментария', 'error'); return; }
+  // tutor_id and child_id are required - use placeholder values if not known
+  // Parent needs to pick which tutor/child; for now use first available
   try {
-    await post('/parent/comments', { text });
+    await post('/comments', { text, tutor_id: 1, child_id: 1 });
     document.getElementById('comment-text').value = '';
     toast('Комментарий отправлен!');
     await loadParentComments();
@@ -1280,38 +1342,43 @@ async function uploadSignedContract(input, contractId) {
 //  CHILD PAGES
 // ============================================================
 async function loadChildSchedule() {
-  const ym = monthParam();
+  const el = document.getElementById('child-lessons-list');
   try {
-    const lessons = await get('/child/lessons?month=' + ym);
+    const ym = monthParam();
+    const year  = parseInt(ym.split('-')[0]);
+    const month = parseInt(ym.split('-')[1]);
+    const lastDay = new Date(year, month, 0).getDate();
+    const dateFrom = `${ym}-01`;
+    const dateTo   = `${ym}-${String(lastDay).padStart(2,'0')}`;
+    const lessons = await get(`/lessons/?date_from=${dateFrom}&date_to=${dateTo}`);
     cachedLessons = lessons || [];
     renderCalendar('child-cal-grid', 'ch-month-label');
-    renderLessonsList('child-lessons-list', lessons, 'child');
-  } catch(e) {}
+    if (el) el.innerHTML = renderLessonsTable(cachedLessons, false);
+  } catch(e) {
+    if (el) el.innerHTML = errBox('Не удалось загрузить расписание');
+  }
 }
 
 async function loadHomeworks() {
   const el = document.getElementById('hw-list');
   try {
-    const hws = await get('/child/homeworks');
+    const hws = await get('/homeworks');
     if (!hws?.length) { el.innerHTML = '<div class="alert alert-info">Домашних заданий нет</div>'; return; }
     el.innerHTML = hws.map(h => `
       <div class="card" style="margin-bottom:10px;opacity:${h.is_done ? .7 : 1}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <span class="badge ${h.is_done ? 'badge-green' : 'badge-amber'}">${h.is_done ? 'Выполнено' : 'Не выполнено'}</span>
-          <span style="font-size:12px;color:#888">${(h.assigned_date || '').slice(0,10)} · ${h.subject_name || h.subject || ''}</span>
+          <span style="font-size:12px;color:#888">${(h.created_at || '').slice(0,10)}</span>
         </div>
-        <p style="font-size:13px;margin-bottom:10px">${h.description || h.task || ''}</p>
-        ${!h.is_done ? `<div style="display:flex;gap:8px">
-          <button class="btn sm success" onclick="markHWDone(${h.id})">✓ Выполнено</button>
-          <label class="btn sm" style="cursor:pointer">↑ Загрузить файл<input type="file" style="display:none" onchange="uploadHW(this,${h.id})"></label>
-        </div>` : ''}
+        <p style="font-size:13px;margin-bottom:10px">${h.description || ''}</p>
+        ${!h.is_done ? `<button class="btn sm success" onclick="markHWDone(${h.id})">✓ Выполнено</button>` : ''}
       </div>`).join('');
   } catch(e) { el.innerHTML = errBox('Ошибка загрузки домашних заданий'); }
 }
 
 async function markHWDone(id) {
   try {
-    await patch('/child/homeworks/' + id, { is_done: true });
+    await patch('/homeworks/' + id + '/submit', { submission_url: 'done' });
     toast('Отмечено как выполненное!');
     await loadHomeworks();
   } catch(e) {}
@@ -1319,11 +1386,9 @@ async function markHWDone(id) {
 
 async function uploadHW(input, id) {
   if (!input.files?.length) return;
-  const fd = new FormData();
-  fd.append('file', input.files[0]);
   try {
-    await api('POST', '/child/homeworks/' + id + '/file', fd, true);
-    toast('Файл загружен!');
+    await patch('/homeworks/' + id + '/submit', { submission_url: input.files[0].name });
+    toast('Задание отмечено как выполненное!');
     await loadHomeworks();
   } catch(e) {}
 }
@@ -1343,47 +1408,57 @@ async function loadSubjects() {
 async function openAddLessonModal() {
   const studentSel = document.getElementById('ls-student');
   const subjectSel = document.getElementById('ls-subj');
+  const tutorRow   = document.getElementById('ls-tutor-row');
+  const tutorSel   = document.getElementById('ls-tutor');
   if (!studentSel || !subjectSel) return;
 
-  studentSel.innerHTML = '<option value="">Загрузка учеников...</option>';
-  subjectSel.innerHTML = '<option value="">Загрузка предметов...</option>';
+  studentSel.innerHTML = '<option value="">Загрузка...</option>';
+  subjectSel.innerHTML = '<option value="">Загрузка...</option>';
 
-  // 1. Загружаем учеников через наш рабочий эндпоинт уроков
+  // Для администратора показываем выбор репетитора
+  if (currentUser?.role === 'admin') {
+    tutorRow.style.display = '';
+    tutorSel.innerHTML = '<option value="">Загрузка...</option>';
+    try {
+      // /users/tutors/public возвращает TutorProfileOut: { id: tutor_profile.id, user: {...} }
+      const tutorProfiles = await get('/users/tutors/public');
+      tutorSel.innerHTML = (tutorProfiles || []).length
+        ? tutorProfiles.map(tp =>
+            `<option value="${tp.id}">${(tp.user.last_name || '')} ${(tp.user.first_name || '')}`.trim() + `</option>`
+          ).join('')
+        : '<option value="">Нет репетиторов в системе</option>';
+    } catch(e) {
+      tutorSel.innerHTML = '<option value="">Ошибка загрузки репетиторов</option>';
+    }
+  } else {
+    tutorRow.style.display = 'none';
+  }
+
+  // Загружаем учеников
   try {
     const students = await get('/lessons/students-list/all');
-    if (!students || students.length === 0) {
-      studentSel.innerHTML = '<option value="">Нет зарегистрированных учеников</option>';
-    } else {
-      studentSel.innerHTML = students.map(s => {
-        const name = `${s.last_name || ''} ${s.first_name || ''}`.trim() || s.email;
-        const realChildId = s.child_profile?.id || s.id;
-        return `<option value="${realChildId}">${name}</option>`;
-      }).join('');
-    }
+    studentSel.innerHTML = (students || []).length
+      ? students.map(s => {
+          const name = `${s.last_name || ''} ${s.first_name || ''}`.trim() || s.email;
+          const realChildId = s.child_profile?.id || s.id;
+          return `<option value="${realChildId}">${name}</option>`;
+        }).join('')
+      : '<option value="">Нет учеников в системе</option>';
   } catch(e) {
-    console.error("Ошибка загрузки учеников:", e);
-    studentSel.innerHTML = '<option value="">Ошибка загрузки списка</option>';
+    studentSel.innerHTML = '<option value="">Ошибка загрузки</option>';
   }
 
-  // 2. Автоматически загружаем РЕАЛЬНЫЕ предметы из твоего Swagger (/subjects)
+  // Загружаем предметы
   try {
-    const subjects = await get('/subjects'); // Твой публичный эндпоинт из Swagger!
-    if (!subjects || subjects.length === 0) {
-      subjectSel.innerHTML = '<option value="">Предметы не созданы в базе</option>';
-    } else {
-      subjectSel.innerHTML = subjects.map(sub => {
-        // Проверяем, как бэк возвращает ID и название (id, name, title или slug)
-        const subId = sub.id;
-        const subName = sub.name || sub.title || sub.slug || "Без названия";
-        return `<option value="${subId}">${subName}</option>`;
-      }).join('');
-    }
+    const subjects = await get('/subjects');
+    subjectSel.innerHTML = (subjects || []).length
+      ? subjects.map(s => `<option value="${s.id}">${s.name}</option>`).join('')
+      : '<option value="">Предметы не созданы</option>';
   } catch(e) {
-    console.error("Ошибка загрузки предметов:", e);
-    subjectSel.innerHTML = '<option value="1">Математика (дефолт)</option>'; // оставляем заглушку при ошибке
+    subjectSel.innerHTML = '<option value="1">Математика</option>';
   }
 
-  // Дефолтная дата (завтра)
+  // Дефолтная дата — завтра
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const dateInput = document.getElementById('ls-date');
@@ -1408,28 +1483,31 @@ async function addLesson() {
   const timeStart = timeInput.value;
   const duration  = parseInt(durationInput?.value) || 60;
 
-  // АВТОМАТИЧЕСКИЙ ПОДБОР ПРАВИЛЬНОГО ID ПРОФИЛЯ РЕПЕТИТОРА
+  // Determine tutor profile ID
   let tutorId = null;
-
   const tutorSelect = document.getElementById('ls-tutor');
-  if (tutorSelect && tutorSelect.value) {
-    // Если это АДМИН создает урок, он выбирает репетитора из выпадающего списка
-    tutorId = parseInt(tutorSelect.value);
-  } else if (currentUser) {
-    // Если это сам РЕПЕТИТОР Максим:
-    // Ищем реальный ID его профиля, который бэк прячет внутри currentUser
-    tutorId = currentUser.tutor_profile?.id || currentUser.tutor_id;
 
-    // Если бэкенд вообще забыл прислать профиль в сессию,
-    // ставим временную 1 (так как он точно первый репетитор в базе)
+  if (currentUser?.role === 'admin') {
+    // Admin picks from dropdown — value is tutor_profile.id
+    tutorId = tutorSelect?.value ? parseInt(tutorSelect.value) : null;
     if (!tutorId) {
-      console.warn("Предупреждение: tutor_profile не найден в currentUser, ставим дефолтный ID 1");
-      tutorId = 1;
+      toast('Выберите репетитора из списка', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Добавить'; }
+      return;
     }
+  } else if (currentUser?.role === 'tutor') {
+    // Tutor's own profile id comes from /users/me → tutor_profile.id
+    tutorId = currentUser.tutor_profile?.id || null;
+    if (!tutorId) {
+      toast('Профиль репетитора не найден. Попробуйте выйти и войти заново.', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Добавить'; }
+      return;
+    }
+  } else {
+    toast('Только репетитор или администратор может создавать занятия', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Добавить'; }
+    return;
   }
-
-  // Если всё совсем плохо, не даем отправить пустой ID
-  if (!tutorId) tutorId = 1;
 
   if (!date || !timeStart) {
     alert('Укажите дату и время начала занятия');
@@ -1477,17 +1555,14 @@ async function addLesson() {
 
   try {
     await post('/lessons/', payload);
-    if (typeof closeModal === 'function') closeModal('modal-lesson');
+    closeModal('modal-lesson');
+    toast('✓ Занятие успешно добавлено!');
 
-    if (typeof toast === 'function') toast('✓ Занятие успешно добавлено!');
-    else alert('✓ Занятие успешно добавлено!');
-
-    if (currentUser?.role === 'tutor' && typeof loadTutorSchedule === 'function') {
-      await loadTutorSchedule();
-    }
+    if (currentUser?.role === 'tutor') await loadTutorSchedule();
+    if (currentUser?.role === 'admin') await loadAdminLessons();
   } catch(e) {
     console.error("Бэкенд отклонил запрос:", e);
-    alert('Не удалось сохранить занятие. Проверьте консоль.');
+    toast('❌ ' + (e.message || 'Не удалось сохранить занятие'), 'error');
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -1502,16 +1577,18 @@ async function addLesson() {
 function showLessonDetail(id) {
   const l = cachedLessons.find(x => x.id === id);
   if (!l) return;
+  const subjTitle = l.subject_name || `Предмет #${l.subject_id}`;
+  const dateTitle = (l.date || '').slice(0, 10);
   document.getElementById('detail-title').innerHTML =
-    `${l.subject_name || l.subject || ''} · ${(l.lesson_date || l.date || '').slice(0,10)} <button class="btn sm" onclick="closeModal('modal-lesson-detail')">✕</button>`;
+    `${subjTitle} · ${dateTitle} <button class="btn sm" onclick="closeModal('modal-lesson-detail')">✕</button>`;
 
   let body = `
     <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <span class="badge ${statusBadge(l.status)}">${statusLabel(l.status)}</span>
-      <span class="badge ${l.is_paid ? 'badge-green' : 'badge-amber'}">${l.is_paid ? 'Оплачено' : 'Не оплачено'}</span>
     </div>
     <div style="font-size:13px;color:#888;margin-bottom:16px">
-      Время: ${(l.lesson_time || l.time || '').slice(0,5)} · Длительность: ${l.duration_min || 60} мин · Стоимость: ${l.price || l.amount || 80} BYN
+      Ученик: <strong>${l.student_name || '—'}</strong> · Репетитор: <strong>${l.tutor_name || '—'}</strong><br>
+      Время: ${(l.time_start || '').slice(0,5)}–${(l.time_end || '').slice(0,5)}
     </div>`;
 
   // Tutor can change status
@@ -1572,10 +1649,11 @@ async function addHomework(lessonId) {
   const text = document.getElementById('hw-text').value.trim();
   if (!text) { toast('Введите текст задания', 'error'); return; }
   const l = cachedLessons.find(x => x.id === lessonId);
+  if (!l) { toast('Занятие не найдено', 'error'); return; }
   try {
-    await post('/tutor/homeworks', {
+    await post('/homeworks', {
       lesson_id:   lessonId,
-      student_id:  l?.student_id,
+      child_id:    l.child_id,
       description: text,
     });
     toast('Домашнее задание добавлено!');
@@ -1588,17 +1666,29 @@ async function addHomework(lessonId) {
 // ============================================================
 async function openReportModal() {
   const sel = document.getElementById('rp-student');
-  sel.innerHTML = cachedStudents.map(s => `<option value="${s.id}">${s.full_name || s.name}</option>`).join('');
+  try {
+    const students = await get('/lessons/tutor/my-students');
+    sel.innerHTML = (students || []).map(s =>
+      `<option value="${s.child_profile_id}">${s.last_name || ''} ${s.first_name || ''}</option>`
+    ).join('') || '<option value="">Нет учеников</option>';
+  } catch(e) {
+    sel.innerHTML = '<option value="">Ошибка загрузки</option>';
+  }
   openModal('modal-report');
 }
 
 async function submitReport() {
-  const studentId = document.getElementById('rp-student').value;
+  const childId   = parseInt(document.getElementById('rp-student').value);
   const lessons   = parseInt(document.getElementById('rp-lessons').value) || 5;
   const content   = document.getElementById('rp-content').value.trim();
   if (!content) { toast('Введите текст отчёта', 'error'); return; }
   try {
-    await post('/tutor/reports', { student_id: parseInt(studentId), lessons_count: lessons, content });
+    await post('/reports', {
+      child_id:     childId,
+      subject_id:   1,  // default subject; could be made selectable
+      lesson_count: lessons,
+      content,
+    });
     toast('Отчёт сохранён!');
     closeModal('modal-report');
     await loadTutorFinance();
@@ -1637,51 +1727,27 @@ async function downloadParentContract(id) {
 function renderLessonsTable(lessons, showTutorStudent = false) {
   if (!lessons?.length) return '<div style="color:#888;font-size:13px;padding:8px 0">Занятий нет</div>';
 
-  // Вспомогательная функция, которая ищет пользователя по ID или ID его профиля
-  const findUserName = (id, isTutor = false) => {
-    if (!window.cachedUsers || !window.cachedUsers.length) return null;
-
-    // Ищем пользователя, сопоставляя ID из уроков с ID его ПРОФИЛЯ
-    const user = window.cachedUsers.find(u => {
-      if (isTutor) {
-        // Если ищем репетитора, проверяем tutor_profile.id или его собственный id (если профиля нет)
-        return (u.tutor_profile && u.tutor_profile.id === id) || u.id === id;
-      } else {
-        // Если ищем ученика, проверяем child_profile.id, или если сработал наш костыль для Алексея (id 4 -> профиль 1)
-        if (id === 1 && u.id === 4) return true;
-        return (u.child_profile && u.child_profile.id === id) || u.id === id;
-      }
-    });
-
-    if (!user) return null;
-    return `${user.last_name || ''} ${user.first_name || ''}`.trim() || user.email;
-  };
-
   return `<table>
     <thead><tr>
       <th>Дата</th><th>Время</th>
       ${showTutorStudent ? '<th>Ученик</th><th>Репетитор</th>' : ''}
-      <th>Предмет</th><th>Статус</th><th>Оплата</th>
+      <th>Предмет</th><th>Статус</th>
     </tr></thead>
     <tbody>${lessons.map(l => {
-      // Ищем реальные имена в кэше пользователей
-      const studentName = findUserName(l.child_id, false) || l.student_name || `Ученик #${l.child_id}`;
-      const tutorName = findUserName(l.tutor_id, true) || l.tutor_name || `Репетитор #${l.tutor_id}`;
-
-      // Названия предметов обычно статичны, давай временно сопоставим ID предметов, если бэкенд шлет цифру
-      let subjName = l.subject_name || l.subject || `Предмет #${l.subject_id}`;
-      if (l.subject_id === 1) subjName = "Математика";
-      if (l.subject_id === 2) subjName = "Физика";
-      if (l.subject_id === 3) subjName = "Информатика";
+      // Names come directly from backend (populated via joinedload)
+      const studentName = l.student_name || `Ученик #${l.child_id}`;
+      const tutorName   = l.tutor_name   || `Репетитор #${l.tutor_id}`;
+      const subjName    = l.subject_name || `Предмет #${l.subject_id}`;
+      const dateStr     = (l.date || '').slice(0, 10);
+      const timeStr     = (l.time_start || '').slice(0, 5);
 
       return `
       <tr style="cursor:pointer" onclick="showLessonDetail(${l.id})">
-        <td>${(l.date || l.lesson_date || '').slice(0,10)}</td>
-        <td>${(l.time_start || l.lesson_time || l.time || '').slice(0,5)}</td>
+        <td>${dateStr}</td>
+        <td>${timeStr}</td>
         ${showTutorStudent ? `<td>${studentName}</td><td>${tutorName}</td>` : ''}
         <td>${subjName}</td>
         <td><span class="badge ${statusBadge(l.status)}">${statusLabel(l.status)}</span></td>
-        <td><span class="badge ${l.is_paid ? 'badge-green' : 'badge-amber'}">${l.is_paid ? 'Оплачено' : 'Не оплачено'}</span></td>
       </tr>`;
     }).join('')}
     </tbody>

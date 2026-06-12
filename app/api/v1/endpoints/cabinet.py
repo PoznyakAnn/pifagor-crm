@@ -1,12 +1,14 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.db.session import get_db
 from app.models.models import (
     Report, Homework, Payment, Test, TestQuestion, TestAnswer,
-    TestResult, Notification, Comment, Act, ParentContract, TutorContract, User, RoleEnum
+    TestResult, Notification, Comment, Act, ParentContract, TutorContract,
+    User, RoleEnum, Lesson, LessonStatus, TutorProfile
 )
 from app.schemas.schemas import (
     ReportCreate, ReportOut,
@@ -84,10 +86,14 @@ async def create_homework(
     return hw
 
 
+class HomeworkSubmitBody(BaseModel):
+    submission_url: Optional[str] = None
+
+
 @router.patch("/homeworks/{hw_id}/submit")
 async def submit_homework(
     hw_id: int,
-    submission_url: str,
+    body: Optional[HomeworkSubmitBody] = Body(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -95,7 +101,8 @@ async def submit_homework(
     hw = result.scalar_one_or_none()
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
-    hw.submission_url = submission_url
+    if body and body.submission_url:
+        hw.submission_url = body.submission_url
     hw.is_done = True
     await db.commit()
     return {"ok": True}
@@ -347,3 +354,59 @@ async def list_tutor_contracts(
         q = q.where(TutorContract.tutor_id == current_user.tutor_profile.id)
     result = await db.execute(q)
     return result.scalars().all()
+
+
+# ─── GET Comments (for parent) ────────────────────────────────────────────────
+
+@router.get("/comments", response_model=List[CommentOut])
+async def list_comments(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    q = select(Comment)
+    if current_user.role == RoleEnum.parent and current_user.parent_profile:
+        q = q.where(Comment.parent_id == current_user.parent_profile.id)
+    elif current_user.role == RoleEnum.tutor and current_user.tutor_profile:
+        q = q.where(Comment.tutor_id == current_user.tutor_profile.id)
+    result = await db.execute(q.order_by(Comment.created_at.desc()))
+    return result.scalars().all()
+
+
+# ─── Tutor Finance Stats ───────────────────────────────────────────────────────
+
+@router.get("/tutor/finance")
+async def get_tutor_finance(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Tutor finance stats: lessons done, acts uploaded, earnings estimate."""
+    if current_user.role not in (RoleEnum.tutor, RoleEnum.admin):
+        raise HTTPException(status_code=403, detail="Only tutors can access this")
+
+    if not current_user.tutor_profile:
+        return {"lessons_done": 0, "earnings": 0, "acts_count": 0}
+
+    tutor_id = current_user.tutor_profile.id
+
+    # Count completed lessons
+    done_result = await db.execute(
+        select(func.count(Lesson.id))
+        .where(Lesson.tutor_id == tutor_id, Lesson.status == LessonStatus.completed)
+    )
+    lessons_done = done_result.scalar() or 0
+
+    # Count acts
+    acts_result = await db.execute(
+        select(func.count(Act.id)).where(Act.tutor_id == tutor_id)
+    )
+    acts_count = acts_result.scalar() or 0
+
+    # Estimate earnings (rate_per_hour from profile)
+    rate = current_user.tutor_profile.rate_per_hour or 0
+    earnings = round(lessons_done * rate, 2) if rate else lessons_done * 80
+
+    return {
+        "lessons_done": lessons_done,
+        "earnings": earnings,
+        "acts_count": acts_count,
+    }

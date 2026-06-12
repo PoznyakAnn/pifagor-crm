@@ -1,21 +1,47 @@
-import os  # ← Не забудь добавить импорт os в самый верх
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles  # ← Импортируем модуль статики
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
-from app.db.session import engine, Base
+from app.db.session import engine, Base, async_session_maker
 from app.api.v1.endpoints import admin
+
+logger = logging.getLogger(__name__)
+
+
+async def _daily_email_task():
+    """Background task: parse email inbox once a day."""
+    from app.services.email_parser import run_email_parse
+    while True:
+        try:
+            async with async_session_maker() as db:
+                count = await run_email_parse(db)
+                if count:
+                    logger.info("Daily email parse: %d new receipts saved.", count)
+        except Exception as e:
+            logger.error("Daily email parse failed: %s", e)
+        # Sleep 24 hours
+        await asyncio.sleep(86400)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all tables on startup (for dev; in prod use Alembic)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Start daily email parsing in background
+    task = asyncio.create_task(_daily_email_task())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(
@@ -34,6 +60,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 
 
 @app.get("/health")
@@ -41,19 +68,10 @@ async def health():
     return {"status": "ok", "service": "pifagor-api"}
 
 
-# ============================================================
-#  РАЗДАЧА ФРОНТЕНДА (Добавляем строго в самый конец файла)
-# ============================================================
-
-# 1. Вычисляем путь к папке backend/app/static
 current_dir = os.path.dirname(os.path.abspath(__file__))
 static_dir = os.path.join(current_dir, "static")
 
-# 2. Проверяем, существует ли папка, чтобы сервер не падал при запуске
 if not os.path.exists(static_dir):
     os.makedirs(static_dir)
-
-# 3. Монтируем папку на корень "/"
-app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

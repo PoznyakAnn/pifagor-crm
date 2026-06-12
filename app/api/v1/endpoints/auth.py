@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import get_db
-from app.models.models import User
+from app.models.models import User, RoleEnum, TutorProfile, ChildProfile, ParentProfile, InviteCode
 from app.schemas.schemas import Token, LoginRequest, UserCreate, UserOut, TokenRefresh
 from app.core.security import (
     verify_password, get_password_hash,
@@ -69,6 +69,25 @@ async def register(
     )
 
     db.add(new_user)
+    await db.flush()  # get new_user.id without full commit
+
+    # Create role-specific profile
+    if data.role == RoleEnum.tutor:
+        db.add(TutorProfile(user_id=new_user.id))
+    elif data.role == RoleEnum.child:
+        db.add(ChildProfile(user_id=new_user.id))
+    elif data.role == RoleEnum.parent:
+        db.add(ParentProfile(user_id=new_user.id))
+
+    # Mark invite code as used
+    if data.invite_code:
+        invite_res = await db.execute(
+            select(InviteCode).where(InviteCode.code == data.invite_code)
+        )
+        invite = invite_res.scalar_one_or_none()
+        if invite:
+            invite.is_used = True
+
     await db.commit()
     await db.refresh(new_user)
     return new_user

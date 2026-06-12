@@ -72,6 +72,25 @@ class UserOut(UserBase):
     model_config = {"from_attributes": True}
 
 
+class ProfileBasicOut(BaseModel):
+    id: int
+    model_config = {"from_attributes": True}
+
+
+class UserMeOut(UserBase):
+    """Extended user schema for /users/me — includes profile IDs."""
+    id: int
+    role: RoleEnum
+    avatar_url: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    tutor_profile: Optional[ProfileBasicOut] = None
+    child_profile: Optional[ProfileBasicOut] = None
+    parent_profile: Optional[ProfileBasicOut] = None
+
+    model_config = {"from_attributes": True}
+
+
 # ─── Subject ──────────────────────────────────────────────────────────────────
 
 class SubjectOut(BaseModel):
@@ -457,3 +476,28 @@ class TutorContractOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ─── EmailReceipt ──────────────────────────────────────────────────────────────
+
+class EmailReceiptOut(BaseModel):
+    id: int
+    receipt_number: Optional[str] = None
+    payer_name: str
+    amount: float
+    payment_date: Optional[datetime] = None
+    child_id: Optional[int] = None
+    student_name: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ─── Finance Report ────────────────────────────────────────────────────────────
+
+class StudentFinanceRow(BaseModel):
+    child_id: int
+    student_name: str
+    lessons_conducted: int
+    lessons_paid: int
+    amount_paid: float
