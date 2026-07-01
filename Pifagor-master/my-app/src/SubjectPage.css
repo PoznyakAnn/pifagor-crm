@@ -1,0 +1,235 @@
+/* ── Subject page banner (narrower form strip) ── */
+
+.subject-banner__decor {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.subject-banner__decor-item {
+  position: absolute;
+  height: auto;
+  mix-blend-mode: screen;
+  object-fit: contain;
+  transform-origin: center center;
+}
+
+.subject-banner .banner::after {
+  background-image: none !important;
+  background: radial-gradient(circle at 100% 100%, #FFFFFF 0%, #FFF5D1 15%, #FFAE00 55%, #E69100 85%, #CC7A00 100%);
+  bottom: -60px;
+}
+
+.subject-banner-form {
+  position: absolute;
+  left: 50%;
+  bottom: -35px;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(860px, calc(100% - 32px));
+  min-height: 96px;
+  background: #fff;
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: 260px 1fr 1fr 160px;
+  gap: 14px;
+  padding: 0 16px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12);
+  align-items: center;
+}
+
+.subject-banner-form input {
+  height: 40px;
+  width: 100%;
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  padding: 0 16px;
+  font-family: var(--font-futura);
+  font-size: var(--font-text-body);
+  color: #444;
+  background: #fff;
+  outline: none;
+}
+
+.subject-banner-form input::placeholder {
+  color: #9ca3af;
+}
+
+.subject-banner-form input:focus {
+  border-color: #2d5d8f;
+}
+
+.subject-banner-form .banner-form-btn {
+  height: 45px;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+  font-family: var(--font-futura);
+  font-size: var(--text-body);
+  font-weight: 400;
+}
+
+.subject-banner-form .banner-form-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(0.9);
+}
+
+/* ── Tutors grid ── */
+
+.tutors-grid {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.subject-tutors-empty {
+  width: 100%;
+  margin: 24px 0 8px;
+  padding: 32px 24px;
+  text-align: center;
+  color: #5a738e;
+  background: #f4fafc;
+  border-radius: 16px;
+}
+
+.tutor-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+}
+
+.tutor-avatar {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: bold;
+  font-family: var(--font-futura);
+}
+
+.tutor-name {
+  font-weight: 600;
+  text-align: center;
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.tutor-title {
+  font-size: 12px;
+  color: #64748b;
+  text-align: center;
+}
+
+/* Базовые стили для плашки (Математика и Физика по умолчанию) */
+.faq-item {
+  background-color: #F4FAFC; /* Нежно-голубой фон */
+  border-radius: 12px;
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: background-color 0.3s ease;
+  width: 100%; /* Растягиваем плашку на всю ширину контейнера */
+  box-sizing: border-box;
+}
+
+/* Кнопка-вопрос (Исправлено флексами) */
+.faq-item .faq-question {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important; /* Убираем фиксированную высоту, из-за которой она сжалась */
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 24px 32px !important;
+  background: none !important;
+  border: none !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  font-weight: 500 !important;
+  font-size: 16px !important;
+  color: #1A547E;
+  box-sizing: border-box !important;
+}
+
+/* Принудительно заставляем текст вопроса не сжиматься */
+.faq-item .faq-question > span {
+  display: inline-block !important;
+  width: auto !important;
+}
+
+/* Иконка-стрелочка (Фиксируем жесткие размеры) */
+.faq-item .faq-icon {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important; /* Не даем ей сжиматься */
+  min-height: 20px !important;
+  color: #7994A6;
+  transition: transform 0.3s ease !important;
+  display: block !important;
+}
+
+/* Поворот стрелочки при открытии */
+.faq-item .faq-icon--open {
+  transform: rotate(180deg) !important;
+}
+
+/* Текст ответа */
+.faq-item .faq-answer {
+  padding: 0 32px 24px 32px !important;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #5A738E;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* ── ТЕМА: АНГЛИЙСКИЙ ЯЗЫК ── */
+.faq-item.theme-english {
+  background-color: #FFFDF5;
+}
+.faq-item.theme-english .faq-question {
+  color: #8A5400 !important;
+}
+.faq-item.theme-english .faq-icon {
+  color: #B38F54 !important;
+}
+.faq-item.theme-english .faq-answer {
+  color: #8C765C !important;
+}
+
+/* ── ТЕМА: ХИМИЯ ── */
+.faq-item.theme-chemistry {
+  background-color: #F2FAF7;
+}
+.faq-item.theme-chemistry .faq-question {
+  color: #167A60 !important;
+}
+.faq-item.theme-chemistry .faq-icon {
+  color: #63A391 !important;
+}
+.faq-item.theme-chemistry .faq-answer {
+  color: #5A857A !important;
+}
+
+/* ── Responsive adjustments for subject pages ── */
+
+@media (max-width: 900px) {
+  .subject-banner-form {
+    grid-template-columns: 1fr;
+    padding: 20px;
+    min-height: auto;
+  }
+
+  .tutors-grid {
+    justify-content: center;
+  }
+}

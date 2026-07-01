@@ -1,0 +1,238 @@
+:root {
+  --blue-dark: #1e3a8a;
+  --blue: #2563eb;
+  --cyan: #06b6d4;
+  --accent: #f9ab01;
+  --bg: white;
+  --text: #1f2937;
+  --muted: #6b7280;
+
+  --radius: 12px;
+
+  --font-unbounded: 'Unbounded', sans-serif;
+  --font-futura: 'Futura PT', sans-serif;
+
+  --letter-spacing-tight: -0.05em;
+  --line-height-tight: 1;
+
+  --text-display: 120px;
+  --text-h1: 52px;
+  --text-h2: 34px;
+  --text-h3: 24px;
+  --text-body-lg: 18px;
+  --text-body: 16px;
+
+  /* Форма записи на пробное */
+  --bf-max-width: 1120px;
+  --bf-min-height: 134px;
+  --bf-info-col: 312px;
+  --bf-btn-col: 184px;
+  --bf-gap: 17px;
+  --bf-padding-x: 20px;
+  --bf-radius: 14px;
+  --bf-field-height: 48px;
+  --bf-field-radius: 10px;
+  --bf-field-padding-x: 18px;
+  --bf-btn-height: 54px;
+  --bf-info-height: 120px;
+  --bf-text-sm: 24px;
+  --bf-text-lg: 29px;
+  --bf-form-big: 26px;
+  --bf-label-offset: 18px;
+  --bf-font-size: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  font-family: var(--font-futura);
+  font-size: var(--text-body);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.text-display-unbounded,
+.text-display-futura,
+.text-h1-unbounded,
+.text-h1-futura,
+.text-h2,
+.text-h3,
+.text-body-lg,
+.text-body {
+  font-weight: 400;
+  font-style: normal;
+}
+
+.text-display-unbounded,
+.text-display-futura,
+.text-h1-unbounded,
+.text-h1-futura {
+  line-height: var(--line-height-tight);        /* 1 */
+  letter-spacing: var(--letter-spacing-tight);  /* -0.05em */
+}
+
+.text-h2, .text-h3, .text-body-lg, .text-body {
+  line-height: 1.4;       /* Свободный интервал, чтобы строки не накладывались */
+  letter-spacing: normal;
+}
+
+.text-display-unbounded {
+  font-family: var(--font-unbounded);
+  font-size: var(--text-display);
+}
+
+.text-display-futura {
+  font-family: var(--font-futura);
+  font-size: var(--text-display);
+}
+
+.text-h1-unbounded {
+  font-family: var(--font-unbounded);
+  font-size: var(--text-h1);
+}
+
+.text-h1-futura {
+  font-family: var(--font-futura);
+  font-size: var(--text-h1);
+}
+
+.text-h2 {
+  font-family: var(--font-futura);
+  font-size: var(--text-h2);
+}
+
+.text-h3 {
+  font-family: var(--font-futura);
+  font-size: var(--text-h3);
+}
+
+.text-body-lg {
+  font-family: var(--font-futura);
+  font-size: var(--text-body-lg);
+}
+
+.text-body {
+  font-family: var(--font-futura);
+  font-size: var(--text-body);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+#prices {
+  scroll-margin-top: 150px;
+}
+
+#reviews {
+  scroll-margin-top: 120px;
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --text-display: 72px;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --text-display: 52px;
+    --text-h1: 36px;
+    --text-h2: 28px;
+  }
+}
+
+.select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+/* Стили главного поля (кнопки открытия) */
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 16px;
+  color: #1f2937;
+  height: 40px;
+  width: 155px;
+  box-sizing: border-box;
+}
+
+.select-trigger.placeholder {
+  color: #9ca3af;
+}
+
+/* Стили для SVG-стрелочки */
+.select-arrow-icon {
+  width: 16px;
+  height: 16px;
+  color: #245985;
+  transition: transform 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
+}
+
+/* Плавный поворот стрелки при открытии */
+.select-arrow-icon.is-open {
+  transform: rotate(180deg);
+  color: #3b82f6;
+}
+
+/* Контейнер выпадающего списка */
+.select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  z-index: 50;
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+/* Стили элементов списка предметов */
+.select-option {
+  padding: 10px 16px;
+  font-size: 15px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.select-option:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.select-option.selected {
+  background: #245985;
+  color: white;
+}
+
+/* Принудительно скрываем скроллбар на всех уровнях вложенности */
+html, body, #root, [data-reactroot] {
+  -ms-overflow-style: none !important;  /* IE и Edge */
+  scrollbar-width: none !important;     /* Firefox */
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar {
+  display: none !important;             /* Chrome, Safari, Opera */
+}
